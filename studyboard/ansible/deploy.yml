@@ -1,0 +1,17 @@
+- hosts: app
+  become: true
+  tasks:
+    - name: Installer Docker et le SDK Python
+      apt:
+        name: [docker.io, python3-docker]
+        state: present
+        update_cache: true
+
+    - name: Déployer le conteneur StudyBoard
+      community.docker.docker_container:
+        name: studyboard
+        image: '{{ image }}'
+        state: started
+        pull: true
+        restart_policy: always
+        published_ports: ['8080:8080']

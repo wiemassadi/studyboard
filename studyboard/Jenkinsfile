@@ -1,0 +1,57 @@
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+
+  // Jenkins interroge GitHub toutes les 2 minutes environ
+  triggers { pollSCM('H/2 * * * *') }
+
+  environment {
+    // À MODIFIER : ton identifiant Docker Hub et l'adresse IP de la VM « app »
+    IMAGE = 'TON_USER_DOCKERHUB/studyboard'
+    APP_HOST = 'IP_DE_APP'
+    ANSIBLE_CONFIG = 'ansible/ansible.cfg'
+  }
+
+  stages {
+    stage('Test') {
+      steps { sh 'mvn -B test' }
+      post { always { junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml' } }
+    }
+
+    stage('Package') {
+      steps { sh 'mvn -B -DskipTests -Dbuild.number=$BUILD_NUMBER package' }
+    }
+
+    stage('Docker build') {
+      steps { sh 'docker build -t $IMAGE:$BUILD_NUMBER -t $IMAGE:latest .' }
+    }
+
+    stage('Docker push') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+          sh 'echo $DH_PASS | docker login -u $DH_USER --password-stdin'
+          sh 'docker push $IMAGE:$BUILD_NUMBER'
+          sh 'docker push $IMAGE:latest'
+        }
+      }
+    }
+
+    stage('Deploy') {
+      steps { sh 'ansible-playbook -i ansible/inventory.ini ansible/deploy.yml -e image=$IMAGE:$BUILD_NUMBER' }
+    }
+
+    // Vérifie que l'application répond ET que c'est bien la nouvelle version (numéro de build)
+    stage('Smoke test') {
+      steps {
+        sh 'for i in $(seq 1 15); do curl -fs http://$APP_HOST:8080/health | grep -q OK && curl -fs http://$APP_HOST:8080/home | grep -q "Build $BUILD_NUMBER<" && exit 0; sleep 3; done; echo "Le smoke test a échoué"; exit 1'
+      }
+    }
+  }
+
+  post { always { sh 'docker logout || true' } }
+}
