@@ -1,6 +1,0 @@
-.git
-.gitignore
-*.md
-ansible
-src
-Jenkinsfile
